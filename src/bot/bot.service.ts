@@ -12,6 +12,15 @@ export class BotService implements OnModuleInit {
   async botMessage() {
     const bot = new TelegramBot(process.env.BOT_API_TOKEN, { polling: true });
 
+    const thanksWords = [
+      'спасибо',
+      'спс',
+      'благодарю',
+      'заработало',
+      'сработало',
+      '👍',
+    ];
+
     bot.on('new_chat_members', (msg) =>
       bot.sendMessage(
         msg.chat.id,
@@ -19,13 +28,52 @@ export class BotService implements OnModuleInit {
       ),
     );
 
-    bot.on('message', (msg) => {
-      if (msg?.reply_to_message?.sticker) {
-        if (msg.sticker.emoji === '👍') {
+    bot.on(
+      'left_chat_member',
+      async (msg) =>
+        await this.removeReputation(String(msg.left_chat_member.id)),
+    );
+
+    bot.on('message', async (msg) => {
+      if (msg?.reply_to_message) {
+        const user = await bot.getChatMember(
+          msg.chat.id,
+          msg.reply_to_message.from.id,
+        );
+
+        if (user.status === 'left') {
+          return;
+        }
+
+        if (msg?.sticker) {
+          if (msg.sticker.emoji === '👍') {
+            this.handleThanksWordReaction(msg, bot);
+          }
+          return;
+        }
+
+        if (
+          msg.reply_to_message.from.username === 'skill_blog_bot' ||
+          msg.reply_to_message.from.username === msg.from.username
+        ) {
+          return;
+        }
+        const thanksWord = msg.text
+          .toLowerCase()
+          .split(' ')
+          .find((word) =>
+            thanksWords.includes(
+              word.replace(/[&\/\\#,+()$~%.'":*?!<>{}]/g, ''),
+            ),
+          );
+        if (thanksWord) {
           this.handleThanksWordReaction(msg, bot);
         }
       }
     });
+  }
+  async getAllReputations(): Promise<Reputations[]> {
+    return await this.prisma.reputations.findMany();
   }
 
   async sendReputationMessage(
@@ -81,6 +129,17 @@ export class BotService implements OnModuleInit {
       fullname,
       reputation: 1,
     });
+  }
+
+  async removeReputation(telegramId: string) {
+    const user = await this.prisma.reputations.findFirst({
+      where: {
+        telegramId,
+      },
+    });
+    if (user) {
+      await this.prisma.reputations.delete({ where: { id: user.id } });
+    }
   }
 
   async getReputation(telegramId: string): Promise<Reputations> {
